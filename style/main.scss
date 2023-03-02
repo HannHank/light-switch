@@ -1,0 +1,55 @@
+// 2min css, able to be ranked at https://www.awwwards.com/ :)
+$base-color: #c6538c;
+body {
+		font-family: sans-serif;
+		text-align: center;
+		margin: 0;
+		background: gray;
+		.header {
+				p {
+						margin: 0;
+						font-size: 50px;
+						font-weight: bold;
+				}
+				width: 100%;
+				background: violet;
+		}
+		.layout {
+				display: flex;
+				// gap: 50px;
+				.action{
+						display:flex;
+						justify-content: center;
+						align-items: center;
+						margin: 10px;
+						height: 200px;
+						width: 200px;
+						border-style: solid;
+						border-width: 2px;
+						border-color: black;
+						align-items: center;
+						box-shadow: 4px 4px 4px #999;
+				        background: darkgray;
+						button {
+								width: 80px;
+								height: 80px;
+								border-radius: 50%;
+								// box-shadow: inset 0px 0px 20px #444;
+								background-color: $base-color;
+								position: relative;
+								cursor: pointer;
+								border: none;
+								// transition: all 0.2s ease-in-out;
+						}// display: inline-grid;
+						button.on{
+								background: yellow;
+						}
+						button:active {
+								box-shadow: none;
+								// transform: translateY(4px);
+								transition: none;
+						}
+				}
+		}
+
+}
