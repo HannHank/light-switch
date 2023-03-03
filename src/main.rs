@@ -17,6 +17,7 @@ async fn main() -> std::io::Result<()> {
     // register the server function -> otherwise the create_resource cannot update on singal
     // trigger
     GetState::register();
+    SetRelayState::register();
     // pub fn register_server_functions() {
     //         _ = GetState::register();
     //     }

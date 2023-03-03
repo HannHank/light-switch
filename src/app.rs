@@ -1,9 +1,14 @@
+use std::{net::Ipv4Addr, str::FromStr};
+
 use leptos::{*, leptos_dom::debug_warn};
 use leptos_meta::*;
 use leptos_router::*;
 use reqwest::header::{CONTENT_TYPE, ACCEPT};
 use serde::{Deserialize, Serialize};
 use rand::Rng;
+use self::api_types::{status, relay};
+mod api_types;
+
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Led {
@@ -15,10 +20,10 @@ pub enum Led {
 pub fn App(cx: Scope) -> impl IntoView {
     // Provides context that manages stylesheets, titles, meta tags, etc.
     provide_meta_context(cx);
-
     view! {
         cx,
         <Stylesheet id="leptos" href="/pkg/leptos_start.css"/>
+        <Stylesheet id="ajax" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css"/>
 
             // sets the document title
             <Title text="HankeHausen"/>
@@ -26,7 +31,13 @@ pub fn App(cx: Scope) -> impl IntoView {
             <Router>
                 <main>
                 <Routes>
-                    <Route path="" view=|cx| view! { cx, <HomePage/> }/>
+                    <Route path="" view=|cx| view! { cx, <HomePage devices=vec![
+                                api_types::Device{
+                                    ip:Ipv4Addr::new(192,168,178,94),
+                                    name: Some("Hühnerhaus".to_string()),
+                                    relay_names:vec!["INDOOR".to_string(),"OUTDOOR".to_string()]
+                                }
+                        ]/> }/>
                 </Routes>
                 </main>
             </Router>
@@ -42,12 +53,13 @@ pub struct Todo {
     completed: bool,
 }
 
-async fn get_data()->Result<Vec<Todo>,reqwest::Error>{
+async fn get_status(ip:Ipv4Addr)->Result<api_types::status,reqwest::Error>{
     let url = format!(
-        "https://jsonplaceholder.typicode.com/todos?userId=1",
+        "http://{}/status",
+        ip
         );
     let client = reqwest::Client::new();
-    let response: Vec<Todo> = client
+    let response: api_types::status = client
         .get(url).fetch_mode_no_cors()
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
@@ -59,109 +71,141 @@ async fn get_data()->Result<Vec<Todo>,reqwest::Error>{
 }
 
 #[server(GetState, "/api")]
-pub async fn get_state(led: Led) -> Result<bool, ServerFnError> {
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    // let data = get_data().await;
-    let mut rng = rand::thread_rng();
-    let random_bool: bool = rng.gen();
-    let state =  match led {
-        Led::led_1=>false,
-        Led::led_2=>true
-    };
-    debug_warn!("state: {:?}",state);
-    // Just for now: return random bool to represent the button states -> shelly api
-    Ok(random_bool)
+pub async fn get_state(ip:Ipv4Addr) -> Result<api_types::status, ServerFnError> {
+    // tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    debug_warn!("getting called");
+    println!("getting called");
+    let data = get_status(ip).await;
+    if let Err(err) =  &data {
+        panic!("http error: {:?}", err);
+    }
+    Ok(data.unwrap())
+}
+#[server(SetRelayState, "/api")]
+pub async fn set_relay_state(ip: Ipv4Addr,index: usize, action: api_types::Turn) -> Result<api_types::relay, ServerFnError> {
+    // tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let url = format!(
+        "http://{}/relay/{}?turn={}",
+        ip,
+        index,
+        action
+        );
+    println!("{:?}",url);
+    let client = reqwest::Client::new();
+    // without json
+    let response: api_types::relay = client
+        .get(url).fetch_mode_no_cors()
+        .header(CONTENT_TYPE, "application/json")
+        .header(ACCEPT, "application/json")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await.unwrap();
+    // let response: api_types::relay = client
+    //     .get(url).fetch_mode_no_cors()
+    //     .header(CONTENT_TYPE, "application/json")
+    //     .header(ACCEPT, "application/json")
+    //     .json(&new_state)
+    //     .send()
+    //     .await
+    //     .unwrap()
+    //     .json()
+    //     .await.unwrap();
+    // let dummy = relay{
+    //     ison: false,
+    //     is_valid: true,
+    //     has_timer: false,
+    //     overpower: false,
+    //     overtemperature: false,
+    //     timer_duration: 0,
+    //     timer_started: 0,
+    //     timer_remaining: 0,
+    //     source: "bla".to_string()};
+    Ok(response)
+}
+
+#[component]
+fn Button(cx: Scope,device:api_types::Device, index:usize, relay:relay) -> impl IntoView {
+   let (state, set_state) = create_signal(cx, relay.ison);
+   // let test = api_types::Device{
+   //                                  ip:Ipv4Addr::new(192,168,178,94),
+   //                                  name: Some("Hühnerhaus".to_string()),
+   //                                  relay_names:vec!["INDOOR".to_string(),"OUTDOOR".to_string()]
+   //                              };
+   // let data = Box::new(test.get_ip());
+   let fetch_state = create_resource_with_initial_value(cx,state,move |_| async move {
+
+       let action = match state() {
+           true=>api_types::Turn::On,
+           false=>api_types::Turn::Off
+       };
+
+       set_relay_state(device.ip,index,action).await.unwrap()
+
+
+   },
+   Some(relay)
+       );
+   view! {cx,
+        <div class="action">
+        <Suspense fallback= move || {view!{cx,"loading..."}}>
+            {
+                match fetch_state.read(cx).unwrap().ison {
+                    true => view!{cx,<button on:click=move |_|{set_state.update(|state| *state=!*state)} class="on" >{device.relay_names.get(index).unwrap()}</button>},
+                    false =>view!{cx,<button on:click=move |_|{set_state.update(|state| *state=!*state)}>{device.relay_names.get(index).unwrap()}</button>}
+                }
+            }
+        </Suspense>
+        </div>
+
+   }
+
 }
 #[component]
-fn HomePage(cx: Scope) -> impl IntoView {
-    // Creates a reactive value to update the buttons
-    let (led_1, set_led_1) = create_signal(cx, 0);
-    let (led_2, set_led_2) = create_signal(cx, 0);
-
-    // Define the behavior when pressing each button
-    let led_1_pressed = move |_| {set_led_1.update(|led_1| if *led_1 == 1 {
-        *led_1 = 0;
-    }else{
-
-        *led_1 = 1;
-    })};
-    let led_2_pressed = move |_| {set_led_2.update(|led_2| if *led_2 == 1 {
-        *led_2 = 0;
-    }else{
-
-        *led_2 = 1;
-    })};
-    // Creates resources, do async stuff 
-    let state_led_1 = create_resource(cx,led_1, |_| async {get_state(Led::led_1).await});
-    let state_led_2 = create_resource(cx,led_2, |_| async {get_state(Led::led_2).await});
-
-    // Playing around 
-    let (reactive_list, set_reactive_list) = create_signal(cx, vec!("hello world","we can now generate","more list items"));
-
-    let on_click = move |_| {debug_warn!("{}",reactive_list.get().len()); set_reactive_list.update(|reactive_list| reactive_list.push("hey from button"));};
-
+fn Device(cx: Scope,device:api_types::Device)-> impl IntoView {
+    let (reload_status, set_reload_status) = create_signal(cx, false);
+    let status = create_resource(cx,reload_status, move |_| async move {get_state(device.ip.clone()).await});
+    let name = device.name.clone();
+    let action_view = move || {
+        status.with(cx,|_|
+                    {
+                        status.read(cx).unwrap().unwrap().clone().relays.into_iter().enumerate().map(|(index,relay)| {
+                            view! {cx,<Button device=device.clone() index=index relay=relay.clone() />}
+                        }).collect::<Vec<_>>()
+                    }
+                    )
+    };
+    
+    // Main view
+    view! {cx,
+        <Suspense fallback=move || {view!{cx,"loading..."}}>
+            <p>{name.clone()}</p>
+            <div class="layout">
+                {action_view.clone()}
+            </div>
+        </Suspense>
+    }
+    
+}
+#[component]
+fn HomePage(cx:Scope, devices:Vec<api_types::Device>) -> impl IntoView {
+    
     // Main view
     view! {cx,
         <div class="header">
             <p>"Hankehausen"</p>
         </div> 
-        <div class="layout">
-        // TODO: move the button rendering into one extra component. Create loading animation.
-        <div class="action">
-        <Suspense fallback=move || view!{cx,<p>"loading..."</p>}>
-        {
-            // This is not a good way to handle conditional rendering.
-            let mut return_view = view!{cx,<button></button>};
-            if let Some(value) = state_led_1.read(cx)
-                .and_then(|res| res.ok())
-                {
-                    if(value){
-                        return_view = view!{cx,<button on:click=led_1_pressed class="on">"INDOOR"</button>}
+        <div class="devices">
+            <For 
+                each={move || devices.clone().into_iter()}
+                key={|device| device.clone()}
+                view=move |cx, device| {
+                    view! {cx,
+                    <Device device=device />
                     }
-                    else{
-                        return_view = view!{cx,<button on:click=led_1_pressed>"INDOOR"</button>}
-                    }
-                } else {
-                    // Handle the case where the result is None or contains an error
-                    return_view = view!{cx,<button>"Broken :("</button>}
                 }
-            return_view
-        }
-        </Suspense>
+            />
         </div>
-        <div class="action">
-        <Suspense fallback=move || view!{cx,<p>"loading..."</p>}>
-        {
-            let mut return_view = view!{cx,<button></button>};
-            if let Some(value) = state_led_2.read(cx)
-                .and_then(|res| res.ok())
-                {
-                    if(value){
-                        return_view = view!{cx,<button on:click=led_2_pressed class="on">"OUTDOOR"</button>}
-                    }
-                    else{
-                        return_view = view!{cx,<button on:click=led_2_pressed>"OUTDOOR"</button>}
-                    }
-                } else {
-                    // Handle the case where the result is None or contains an error
-                    return_view = view!{cx,<button on:click=led_2_pressed>"Broken :("</button>}
-                }
-            return_view
-        }
-        </Suspense>
-        </div>
-
-        </div>
-        <button on:click=on_click>"press me"</button>
-        <p>{move || reactive_list.get().into_iter().len()}</p> 
-        <For 
-        each={move || reactive_list.get().into_iter()}
-        key={|el| *el}
-        view=move |cx, value| {
-            view! {cx,
-            <p>{value}</p>
-            }
-        }
-        />
     }
 }
