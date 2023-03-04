@@ -36,6 +36,11 @@ pub fn App(cx: Scope) -> impl IntoView {
                                     ip:Ipv4Addr::new(192,168,178,94),
                                     name: Some("Hühnerhaus".to_string()),
                                     relay_names:vec!["INDOOR".to_string(),"OUTDOOR".to_string()]
+                                },
+                                api_types::Device{
+                                    ip:Ipv4Addr::new(192,168,178,69),
+                                    name: Some("Steckdose".to_string()),
+                                    relay_names:vec!["BUTTON".to_string()]
                                 }
                         ]/> }/>
                 </Routes>
@@ -101,47 +106,51 @@ pub async fn set_relay_state(ip: Ipv4Addr,index: usize, action: api_types::Turn)
         .await
         .unwrap()
         .json()
-        .await.unwrap();
-    // let response: api_types::relay = client
-    //     .get(url).fetch_mode_no_cors()
-    //     .header(CONTENT_TYPE, "application/json")
-    //     .header(ACCEPT, "application/json")
-    //     .json(&new_state)
-    //     .send()
-    //     .await
-    //     .unwrap()
-    //     .json()
-    //     .await.unwrap();
-    // let dummy = relay{
-    //     ison: false,
-    //     is_valid: true,
-    //     has_timer: false,
-    //     overpower: false,
-    //     overtemperature: false,
-    //     timer_duration: 0,
-    //     timer_started: 0,
-    //     timer_remaining: 0,
-    //     source: "bla".to_string()};
+        .await.unwrap_or_else(|_|{
+            relay{
+        ison: false,
+        is_valid: Some(true),
+        has_timer: false,
+        overpower: false,
+        overtemperature: Some(false),
+        timer_duration: 0,
+        timer_started: 0,
+        timer_remaining: 0,
+        source: "bla".to_string()}
+      });
+
     Ok(response)
 }
 
 #[component]
 fn Button(cx: Scope,device:api_types::Device, index:usize, relay:relay) -> impl IntoView {
    let (state, set_state) = create_signal(cx, relay.ison);
-   // let test = api_types::Device{
-   //                                  ip:Ipv4Addr::new(192,168,178,94),
-   //                                  name: Some("Hühnerhaus".to_string()),
-   //                                  relay_names:vec!["INDOOR".to_string(),"OUTDOOR".to_string()]
-   //                              };
-   // let data = Box::new(test.get_ip());
-   let fetch_state = create_resource_with_initial_value(cx,state,move |_| async move {
+   let test = api_types::Device{
+                                    ip:Ipv4Addr::new(192,168,178,94),
+                                    name: Some("Hühnerhaus".to_string()),
+                                    relay_names:vec!["INDOOR".to_string(),"OUTDOOR".to_string()]
+                                };
+   let data = Box::new(test.get_ip());
+   let fetch_state = create_local_resource_with_initial_value(cx,state,move |state| async move {
 
-       let action = match state() {
+       let action = match state {
            true=>api_types::Turn::On,
            false=>api_types::Turn::Off
        };
-
-       set_relay_state(device.ip,index,action).await.unwrap()
+      // set the button to off if the response was incorrect 
+      let data = set_relay_state(device.ip,index,action).await;
+      data.unwrap_or_else(|_|{
+        relay{
+        ison: false,
+        is_valid: Some(true),
+        has_timer: false,
+        overpower: false,
+        overtemperature: Some(false),
+        timer_duration: 0,
+        timer_started: 0,
+        timer_remaining: 0,
+        source: "bla".to_string()}
+      }) 
 
 
    },
@@ -151,6 +160,7 @@ fn Button(cx: Scope,device:api_types::Device, index:usize, relay:relay) -> impl 
         <div class="action">
         <Suspense fallback= move || {view!{cx,"loading..."}}>
             {
+                // {button_view.clone()}
                 match fetch_state.read(cx).unwrap().ison {
                     true => view!{cx,<button on:click=move |_|{set_state.update(|state| *state=!*state)} class="on" >{device.relay_names.get(index).unwrap()}</button>},
                     false =>view!{cx,<button on:click=move |_|{set_state.update(|state| *state=!*state)}>{device.relay_names.get(index).unwrap()}</button>}
@@ -159,6 +169,7 @@ fn Button(cx: Scope,device:api_types::Device, index:usize, relay:relay) -> impl 
         </Suspense>
         </div>
 
+   // view! {cx,<button></button>} 
    }
 
 }
@@ -202,7 +213,9 @@ fn HomePage(cx:Scope, devices:Vec<api_types::Device>) -> impl IntoView {
                 key={|device| device.clone()}
                 view=move |cx, device| {
                     view! {cx,
-                    <Device device=device />
+                    <div class="device">
+                        <Device device=device />
+                    </div>
                     }
                 }
             />
